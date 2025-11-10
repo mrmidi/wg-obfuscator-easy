@@ -123,6 +123,50 @@ get_external_ip() {
     return 1
 }
 
+resolve_domain_ipv4() {
+    local domain="$1"
+    local ip
+
+    if command_exists dig; then
+        ip=$(dig +short A "$domain" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
+        if [[ -n "$ip" ]]; then
+            echo "$ip"
+            return 0
+        fi
+    fi
+
+    if command_exists getent; then
+        ip=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | grep -E '^[0-9.]+$' | head -1)
+        if [[ -n "$ip" ]]; then
+            echo "$ip"
+            return 0
+        fi
+        ip=$(getent hosts "$domain" 2>/dev/null | awk '{print $1}' | grep -E '^[0-9.]+$' | head -1)
+        if [[ -n "$ip" ]]; then
+            echo "$ip"
+            return 0
+        fi
+    fi
+
+    if command_exists nslookup; then
+        ip=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / {print $2}' | grep -E '^[0-9.]+$' | head -1)
+        if [[ -n "$ip" ]]; then
+            echo "$ip"
+            return 0
+        fi
+    fi
+
+    if command_exists host; then
+        ip=$(host "$domain" 2>/dev/null | awk '/ has address / {print $4}' | grep -E '^[0-9.]+$' | head -1)
+        if [[ -n "$ip" ]]; then
+            echo "$ip"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 main() {
     if ! [ -t 0 ]; then
         print_error "$(msg SCRIPT_REQUIRES_INTERACTIVE)"
@@ -429,14 +473,7 @@ main() {
         local max_dns_checks=12
         local dns_check=0
         while (( dns_check < max_dns_checks )); do
-            local resolved_ip="$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | head -1)"
-            if [[ -z "$resolved_ip" ]]; then
-                if command_exists nslookup; then
-                    resolved_ip="$(nslookup "$DOMAIN" 2>/dev/null | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)"
-                elif command_exists host; then
-                    resolved_ip="$(host "$DOMAIN" 2>/dev/null | grep "has address" | awk '{print $4}' | head -1)"
-                fi
-            fi
+            local resolved_ip="$(resolve_domain_ipv4 "$DOMAIN")"
 
             if [[ "$resolved_ip" == "$EXTERNAL_IP" ]]; then
                 DNS_RESOLVED=true
