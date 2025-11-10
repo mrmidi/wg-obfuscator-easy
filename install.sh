@@ -237,7 +237,7 @@ main() {
         exit 1
     fi
 
-    if [[ -n "$WG_OBF_LANG" ]]; then
+    if [[ -n "${WG_OBF_LANG:-}" ]]; then
         LANG_CHOICE="$WG_OBF_LANG"
         load_lang_strings "$LANG_CHOICE"
     fi
@@ -285,7 +285,7 @@ main() {
     fi
 
     TAG="latest"
-    if [[ -n "$1" ]]; then
+    if [[ -n "${1-}" ]]; then
         TAG="$1"
     fi
     IMAGE_NAME="docker.io/clustermeerkat/wg-obf-easy:$TAG"
