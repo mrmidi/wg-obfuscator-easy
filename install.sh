@@ -4,8 +4,8 @@
 #
 # This script installs and configures WireGuard Obfuscator Easy on a VPS.
 
-set -e
-#set -x
+# stricter error handling
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_DIR="${SCRIPT_DIR}/installer"
@@ -13,6 +13,57 @@ LANG_CHOICE="${LANG_CHOICE:-en}"
 
 # Default helper source: upstream ClusterM repo (override via REPO_RAW_BASE if needed)
 REPO_RAW_BASE="${REPO_RAW_BASE:-https://raw.githubusercontent.com/ClusterM/wg-obfuscator-easy/master/installer}"
+
+WG_CONTAINER_STARTED=false
+CADDY_PREVIOUSLY_ACTIVE=false
+ACME_EMAIL="${ACME_EMAIL:-}"
+DOMAIN="${DOMAIN:-}"
+HTTP_PORT="${HTTP_PORT:-}"
+WIREGUARD_PORT="${WIREGUARD_PORT:-}"
+WEB_PREFIX="${WEB_PREFIX:-}"
+ENABLE_HTTPS="${ENABLE_HTTPS:-false}"
+
+cleanup() {
+    local exit_code=$?
+    trap - EXIT
+
+    local container_name="${CONTAINER_NAME:-}"
+
+    if [[ $exit_code -ne 0 ]]; then
+        if [[ "$WG_CONTAINER_STARTED" == true && -n "$container_name" ]] && command_exists docker; then
+            docker stop "$container_name" >/dev/null 2>&1 || true
+            docker rm "$container_name" >/dev/null 2>&1 || true
+        fi
+
+        if [[ "$CADDY_PREVIOUSLY_ACTIVE" == true ]] && command_exists systemctl; then
+            systemctl start caddy >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+handle_error() {
+    local status=$?
+    local line=${1:-0}
+    if declare -F msg >/dev/null 2>&1; then
+        print_error "$(msg INSTALL_FAILED "$line")"
+    else
+        print_error "Installation failed at line $line."
+    fi
+    exit $status
+}
+
+handle_interrupt() {
+    if declare -F msg >/dev/null 2>&1; then
+        print_error "$(msg INSTALL_FAILED "$LINENO")"
+    else
+        print_error "Installation interrupted at line $LINENO."
+    fi
+    exit 1
+}
+
+trap cleanup EXIT
+trap 'handle_error ${LINENO}' ERR
+trap handle_interrupt INT TERM
 
 # Colors for output
 RED='\033[0;31m'
@@ -110,12 +161,10 @@ if ! load_lang_strings "$LANG_CHOICE"; then
     load_lang_strings "en"
 fi
 
-trap 'print_error "$(msg INSTALL_FAILED "$LINENO")"' ERR INT TERM
-
 get_external_ip() {
     local ip
     for service in "ifconfig.me" "ipinfo.io/ip" "icanhazip.com" "api.ipify.org"; do
-        ip=$(curl -s --max-time 5 "https://$service" 2>/dev/null || curl -s --max-time 5 "http://$service" 2>/dev/null)
+        ip=$( { curl -s --max-time 5 "https://$service" 2>/dev/null || curl -s --max-time 5 "http://$service" 2>/dev/null || true; } )
         if [[ -n "$ip" && "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
             echo "$ip"
             return 0
@@ -129,7 +178,7 @@ resolve_domain_ipv4() {
     local ip
 
     if command_exists dig; then
-        ip=$(dig +short A "$domain" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
+        ip=$( { dig +short A "$domain" 2>/dev/null || true; } | awk '/^[0-9.]+$/ { print $1; exit }' )
         if [[ -n "$ip" ]]; then
             echo "$ip"
             return 0
@@ -137,12 +186,12 @@ resolve_domain_ipv4() {
     fi
 
     if command_exists getent; then
-        ip=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | grep -E '^[0-9.]+$' | head -1)
+        ip=$( { getent ahostsv4 "$domain" 2>/dev/null || true; } | awk '/^[0-9.]+/ { print $1; exit }' )
         if [[ -n "$ip" ]]; then
             echo "$ip"
             return 0
         fi
-        ip=$(getent hosts "$domain" 2>/dev/null | awk '{print $1}' | grep -E '^[0-9.]+$' | head -1)
+        ip=$( { getent hosts "$domain" 2>/dev/null || true; } | awk '/^[0-9.]+/ { print $1; exit }' )
         if [[ -n "$ip" ]]; then
             echo "$ip"
             return 0
@@ -150,7 +199,7 @@ resolve_domain_ipv4() {
     fi
 
     if command_exists nslookup; then
-        ip=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / {print $2}' | grep -E '^[0-9.]+$' | head -1)
+        ip=$( { nslookup "$domain" 2>/dev/null || true; } | awk '/^Address:[[:space:]]+[0-9.]+$/ { print $2; exit }' )
         if [[ -n "$ip" ]]; then
             echo "$ip"
             return 0
@@ -158,7 +207,7 @@ resolve_domain_ipv4() {
     fi
 
     if command_exists host; then
-        ip=$(host "$domain" 2>/dev/null | awk '/ has address / {print $4}' | grep -E '^[0-9.]+$' | head -1)
+        ip=$( { host "$domain" 2>/dev/null || true; } | awk '/ has address / { print $4; exit }' )
         if [[ -n "$ip" ]]; then
             echo "$ip"
             return 0
@@ -342,8 +391,13 @@ main() {
         docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
     fi
 
-    if command_exists systemctl && systemctl is-active --quiet caddy 2>/dev/null; then
-        systemctl stop caddy || true
+    if command_exists systemctl; then
+        if systemctl is-active --quiet caddy 2>/dev/null; then
+            CADDY_PREVIOUSLY_ACTIVE=true
+            systemctl stop caddy >/dev/null 2>&1 || true
+        else
+            CADDY_PREVIOUSLY_ACTIVE=false
+        fi
     fi
 
     if [[ "$KEEP_OLD_HOST_CONFIG" == false ]]; then
@@ -381,6 +435,7 @@ main() {
     pull_container_image "$IMAGE_NAME"
 
     start_wg_container "$IMAGE_NAME" "$CONTAINER_NAME" "$CONFIG_DIR" "$WEB_PREFIX" "$EXTERNAL_IP" "$WIREGUARD_PORT" "$ADMIN_PASSWORD" "$HTTP_PORT"
+    WG_CONTAINER_STARTED=true
 
     wait_for_container "$CONTAINER_NAME"
     wait_for_app "$HTTP_PORT" "$WEB_PREFIX" || true
