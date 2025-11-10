@@ -9,9 +9,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_DIR="${SCRIPT_DIR}/installer"
-REPO_RAW_BASE="https://raw.githubusercontent.com/mrmidi/wg-obfuscator-easy/master/installer"
-
 LANG_CHOICE="${LANG_CHOICE:-en}"
+
+# Default helper source: upstream ClusterM repo (override via REPO_RAW_BASE if needed)
+REPO_RAW_BASE="${REPO_RAW_BASE:-https://raw.githubusercontent.com/ClusterM/wg-obfuscator-easy/master/installer}"
 
 # Colors for output
 RED='\033[0;31m'
