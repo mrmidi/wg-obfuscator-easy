@@ -126,7 +126,7 @@ class ClientManager:
             "ip": ip,
             "private_key": str(private),
             "public_key": str(public),
-            "allowed_ips": ["0.0.0.0/0"],
+            "allowed_ips": ["0.0.0.0/0", "::/0"],
             "obfuscator_port": DEFAULT_CLIENT_OBFUSCATOR_PORT,
             "masking_type_override": None,
             "verbosity_level": "INFO",

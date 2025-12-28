@@ -285,7 +285,7 @@ def get_all_clients() -> Dict[str, Dict[str, Any]]:
 
 def save_client(username: str, client_data: Dict[str, Any]) -> None:
     """Save or update client"""
-    allowed_ips_json = json.dumps(client_data.get("allowed_ips", ["0.0.0.0/0"]))
+    allowed_ips_json = json.dumps(client_data.get("allowed_ips", ["0.0.0.0/0", "::/0"]))
     now = datetime.now().isoformat()
     
     with get_db() as conn:
